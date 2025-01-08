@@ -1,5 +1,6 @@
 import json
 from .product import Product
+import pandas as pd
 
 class InventoryManager:
     def __init__(self):
@@ -89,3 +90,32 @@ class InventoryManager:
             return True
         except (FileNotFoundError, json.JSONDecodeError):
             return False
+
+    def export_to_excel(self, filename, filters=None):
+        """
+        Export inventory data to Excel with optional filters
+        filters: dict with keys as column names and values as filter conditions
+        """
+        # Get all products data
+        products_data = self.get_all_products()
+
+        # Convert to DataFrame
+        df = pd.DataFrame.from_dict(products_data, orient='index')
+
+        # Apply filters if provided
+        if filters:
+            for column, condition in filters.items():
+                if column in df.columns:
+                    if isinstance(condition, (list, tuple)):
+                        df = df[df[column].isin(condition)]
+                    elif isinstance(condition, dict):
+                        if 'min' in condition:
+                            df = df[df[column] >= condition['min']]
+                        if 'max' in condition:
+                            df = df[df[column] <= condition['max']]
+                    else:
+                        df = df[df[column] == condition]
+
+        # Save to Excel
+        df.to_excel(filename, index=True, index_label='SKU')
+        return True

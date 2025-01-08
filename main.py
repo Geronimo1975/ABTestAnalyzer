@@ -3,6 +3,7 @@ import plotly.graph_objects as go
 from inventory.inventory_manager import InventoryManager
 from scraper import InventoryScraper
 import os
+from tempfile import NamedTemporaryFile
 
 def create_product_comparison_chart(product1, product2, metric):
     """Create a bar chart comparing two products"""
@@ -25,7 +26,7 @@ def main():
     inventory_manager = InventoryManager()
 
     # Add tabs for different functionalities
-    tab1, tab2 = st.tabs(["Inventory Overview", "Product Comparison"])
+    tab1, tab2, tab3 = st.tabs(["Inventory Overview", "Product Comparison", "Export Data"])
 
     with tab1:
         # Scraping section
@@ -201,6 +202,84 @@ def main():
             f"{abs(product2['quantity'] - product1['quantity'])} units",
             f"{stock_diff:+.1f}%"
         )
+
+    with tab3:
+        st.header("Export Inventory Data")
+
+        # Load inventory data
+        inventory_manager.load_from_json()
+        products = inventory_manager.get_all_products()
+
+        if not products:
+            st.info("No inventory data available. Please fetch data first.")
+            return
+
+        st.write("Configure your export filters:")
+
+        # Get unique categories
+        categories = set(p['category'] for p in products.values())
+
+        # Filter section
+        with st.expander("Export Filters", expanded=True):
+            # Category filter
+            selected_categories = st.multiselect(
+                "Select Categories",
+                options=list(categories),
+                default=list(categories)
+            )
+
+            # Price range filter
+            price_min = min(p['price'] for p in products.values())
+            price_max = max(p['price'] for p in products.values())
+            price_range = st.slider(
+                "Price Range (€)",
+                min_value=float(price_min),
+                max_value=float(price_max),
+                value=(float(price_min), float(price_max))
+            )
+
+            # Stock level filter
+            stock_min = min(p['quantity'] for p in products.values())
+            stock_max = max(p['quantity'] for p in products.values())
+            stock_range = st.slider(
+                "Stock Level Range",
+                min_value=int(stock_min),
+                max_value=int(stock_max),
+                value=(int(stock_min), int(stock_max))
+            )
+
+        # Create filters dictionary
+        filters = {
+            'category': selected_categories,
+            'price': {'min': price_range[0], 'max': price_range[1]},
+            'quantity': {'min': stock_range[0], 'max': stock_range[1]}
+        }
+
+        if st.button("Generate Excel Export"):
+            try:
+                # Create a temporary file
+                with NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                    # Export to Excel
+                    inventory_manager.export_to_excel(tmp.name, filters)
+
+                    # Read the file for download
+                    with open(tmp.name, 'rb') as f:
+                        excel_data = f.read()
+
+                    # Clean up the temporary file
+                    os.unlink(tmp.name)
+
+                    # Create download button
+                    st.download_button(
+                        label="Download Excel File",
+                        data=excel_data,
+                        file_name="inventory_export.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+                    st.success("Export generated successfully!")
+            except Exception as e:
+                st.error(f"Error generating export: {str(e)}")
 
 if __name__ == "__main__":
     main()
