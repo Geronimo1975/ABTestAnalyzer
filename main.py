@@ -4,6 +4,7 @@ from inventory.inventory_manager import InventoryManager
 from scraper import InventoryScraper
 import os
 from tempfile import NamedTemporaryFile
+import numpy as np
 
 def create_product_comparison_chart(product1, product2, metric):
     """Create a bar chart comparing two products"""
@@ -12,6 +13,66 @@ def create_product_comparison_chart(product1, product2, metric):
         go.Bar(name=product2['name'], x=[metric], y=[product2[metric]])
     ])
     fig.update_layout(barmode='group', height=300)
+    return fig
+
+def create_inventory_heatmap(products):
+    """Create a heatmap visualization of inventory data"""
+    # Group products by category
+    categories = {}
+    for product in products.values():
+        cat = product['category']
+        if cat not in categories:
+            categories[cat] = {
+                'total_items': 0,
+                'avg_price': 0,
+                'low_stock': 0,
+                'total_value': 0
+            }
+        categories[cat]['total_items'] += 1
+        categories[cat]['avg_price'] += product['price']
+        categories[cat]['total_value'] += product['price'] * product['quantity']
+        if product['quantity'] <= 10:  # Consider items with stock <= 10 as low stock
+            categories[cat]['low_stock'] += 1
+
+    # Calculate averages
+    for cat in categories:
+        categories[cat]['avg_price'] /= categories[cat]['total_items']
+
+    # Prepare data for heatmap
+    cat_names = list(categories.keys())
+    metrics = ['total_items', 'avg_price', 'low_stock', 'total_value']
+    metric_names = ['Total Products', 'Average Price (€)', 'Low Stock Items', 'Total Value (€)']
+
+    z_data = []
+    for metric in metrics:
+        row = [categories[cat][metric] for cat in cat_names]
+        # Normalize the data for better visualization
+        if metric == 'avg_price':
+            row = [val / max(row) * 100 for val in row]
+        elif metric == 'total_value':
+            row = [val / 1000 for val in row]  # Convert to thousands
+        z_data.append(row)
+
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=z_data,
+        x=cat_names,
+        y=metric_names,
+        hoverongaps=False,
+        colorscale='Viridis',
+        texttemplate="%{z:.1f}",
+        textfont={"size": 10},
+        hovertemplate="Category: %{x}<br>Metric: %{y}<br>Value: %{z:.1f}<extra></extra>"
+    ))
+
+    fig.update_layout(
+        title="Inventory Heatmap Analysis",
+        xaxis_title="Product Categories",
+        yaxis_title="Metrics",
+        height=400,
+        yaxis={'tickangle': 0}
+    )
+
     return fig
 
 def main():
@@ -26,7 +87,7 @@ def main():
     inventory_manager = InventoryManager()
 
     # Add tabs for different functionalities
-    tab1, tab2, tab3 = st.tabs(["Inventory Overview", "Product Comparison", "Export Data"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Inventory Overview", "Product Comparison", "Export Data", "Heatmap Analysis"])
 
     with tab1:
         # Scraping section
@@ -280,6 +341,53 @@ def main():
                     st.success("Export generated successfully!")
             except Exception as e:
                 st.error(f"Error generating export: {str(e)}")
+
+    with tab4:
+        st.header("Inventory Heatmap Analysis")
+
+        # Load inventory data
+        inventory_manager.load_from_json()
+        products = inventory_manager.get_all_products()
+
+        if not products:
+            st.info("No inventory data available. Please fetch data first.")
+            return
+
+        # Display heatmap
+        st.markdown("""
+        This heatmap visualizes key inventory metrics across different product categories:
+        - **Total Products**: Number of unique products in each category
+        - **Average Price**: Normalized average price (0-100 scale)
+        - **Low Stock Items**: Number of products with stock ≤ 10 units
+        - **Total Value**: Total inventory value in thousands (€)
+        """)
+
+        heatmap = create_inventory_heatmap(products)
+        st.plotly_chart(heatmap, use_container_width=True)
+
+        # Additional analysis
+        st.subheader("Category Insights")
+        categories = {}
+        for product in products.values():
+            cat = product['category']
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(product)
+
+        # Show detailed category analysis in expandable sections
+        for category, cat_products in categories.items():
+            with st.expander(f"📊 {category} Analysis"):
+                total_value = sum(p['price'] * p['quantity'] for p in cat_products)
+                avg_price = sum(p['price'] for p in cat_products) / len(cat_products)
+                low_stock = sum(1 for p in cat_products if p['quantity'] <= 10)
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Products", len(cat_products))
+                with col2:
+                    st.metric("Average Price", f"€{avg_price:.2f}")
+                with col3:
+                    st.metric("Total Value", f"€{total_value:,.2f}")
 
 if __name__ == "__main__":
     main()
