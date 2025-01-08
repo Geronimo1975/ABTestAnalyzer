@@ -4,6 +4,15 @@ from inventory.inventory_manager import InventoryManager
 from scraper import InventoryScraper
 import os
 
+def create_product_comparison_chart(product1, product2, metric):
+    """Create a bar chart comparing two products"""
+    fig = go.Figure(data=[
+        go.Bar(name=product1['name'], x=[metric], y=[product1[metric]]),
+        go.Bar(name=product2['name'], x=[metric], y=[product2[metric]])
+    ])
+    fig.update_layout(barmode='group', height=300)
+    return fig
+
 def main():
     st.set_page_config(
         page_title="Inventory Management System",
@@ -15,29 +24,36 @@ def main():
     # Initialize inventory manager
     inventory_manager = InventoryManager()
 
-    # Scraping section
-    st.header("Inventory Data Collection")
-    col1, col2 = st.columns([2, 1])
+    # Add tabs for different functionalities
+    tab1, tab2 = st.tabs(["Inventory Overview", "Product Comparison"])
 
-    with col1:
-        st.markdown("""
-        Analyze current inventory data from B2B website. 
-        Click the button below to fetch fresh inventory data.
-        """)
+    with tab1:
+        # Scraping section
+        st.header("Inventory Data Collection")
+        col1, col2 = st.columns([2, 1])
 
-        if st.button("Fetch Latest Inventory Data"):
-            with st.spinner("Scraping inventory data..."):
-                scraper = InventoryScraper("https://b2b.unimall.lt/")
-                inventory_data = scraper.scrape_inventory()
-                inventory_manager.add_products(inventory_data) #add scraped data to inventory manager
-                inventory_manager.save_to_json() #save after scraping
-                st.success(f"Successfully scraped {len(inventory_data)} products!")
+        with col1:
+            st.markdown("""
+            Analyze current inventory data from B2B website. 
+            Click the button below to fetch fresh inventory data.
+            """)
 
-    # Load existing inventory data
-    inventory_manager.load_from_json()
-    products = inventory_manager.get_all_products()
+            if st.button("Fetch Latest Inventory Data"):
+                with st.spinner("Scraping inventory data..."):
+                    scraper = InventoryScraper("https://b2b.unimall.lt/")
+                    inventory_data = scraper.scrape_inventory()
+                    inventory_manager.add_products(inventory_data)
+                    inventory_manager.save_to_json()
+                    st.success(f"Successfully scraped {len(inventory_data)} products!")
 
-    if products:
+        # Load existing inventory data
+        inventory_manager.load_from_json()
+        products = inventory_manager.get_all_products()
+
+        if not products:
+            st.info("No inventory data available. Please fetch data using the button above.")
+            return
+
         # Display key metrics
         total_value = inventory_manager.get_total_inventory_value()
         low_stock = inventory_manager.get_low_stock_products()
@@ -101,8 +117,90 @@ def main():
                     if product.get('image_path'):
                         st.image(product['image_path'], width=100)
 
-    else:
-        st.info("No inventory data available. Please fetch data using the button above.")
+    with tab2:
+        st.header("Product Comparison")
+
+        if not products:
+            st.info("Please fetch inventory data first to enable product comparison.")
+            return
+
+        # Product selection
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Product 1")
+            product1_sku = st.selectbox(
+                "Select first product",
+                options=list(products.keys()),
+                format_func=lambda x: products[x]['name']
+            )
+            product1 = products[product1_sku]
+
+        with col2:
+            st.subheader("Product 2")
+            remaining_skus = [sku for sku in products.keys() if sku != product1_sku]
+            product2_sku = st.selectbox(
+                "Select second product",
+                options=remaining_skus,
+                format_func=lambda x: products[x]['name']
+            )
+            product2 = products[product2_sku]
+
+        # Comparison metrics
+        st.subheader("Comparison Analysis")
+
+        # Basic information comparison
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown(f"### {product1['name']}")
+            st.write(f"**Category:** {product1['category']}")
+            st.write(f"**Price:** €{product1['price']:.2f}")
+            st.write(f"**Quantity:** {product1['quantity']}")
+            st.write(f"**Total Value:** €{product1['price'] * product1['quantity']:.2f}")
+            if product1.get('image_path'):
+                st.image(product1['image_path'], width=200)
+
+        with col2:
+            st.markdown(f"### {product2['name']}")
+            st.write(f"**Category:** {product2['category']}")
+            st.write(f"**Price:** €{product2['price']:.2f}")
+            st.write(f"**Quantity:** {product2['quantity']}")
+            st.write(f"**Total Value:** €{product2['price'] * product2['quantity']:.2f}")
+            if product2.get('image_path'):
+                st.image(product2['image_path'], width=200)
+
+        # Visual comparisons
+        st.subheader("Visual Comparisons")
+
+        # Price comparison
+        st.write("#### Price Comparison")
+        price_chart = create_product_comparison_chart(product1, product2, 'price')
+        st.plotly_chart(price_chart, use_container_width=True)
+
+        # Quantity comparison
+        st.write("#### Quantity Comparison")
+        quantity_chart = create_product_comparison_chart(product1, product2, 'quantity')
+        st.plotly_chart(quantity_chart, use_container_width=True)
+
+        # Additional analysis
+        st.subheader("Additional Analysis")
+
+        # Calculate and display price difference
+        price_diff = ((product2['price'] - product1['price']) / product1['price']) * 100
+        st.metric(
+            "Price Difference",
+            f"€{abs(product2['price'] - product1['price']):.2f}",
+            f"{price_diff:+.1f}%"
+        )
+
+        # Calculate and display stock level difference
+        stock_diff = ((product2['quantity'] - product1['quantity']) / product1['quantity']) * 100
+        st.metric(
+            "Stock Level Difference",
+            f"{abs(product2['quantity'] - product1['quantity'])} units",
+            f"{stock_diff:+.1f}%"
+        )
 
 if __name__ == "__main__":
     main()

@@ -12,6 +12,20 @@ class InventoryManager:
             return True
         return False
 
+    def add_products(self, products_data):
+        """Add multiple products from scraped data"""
+        for product_data in products_data:
+            product = Product(
+                name=product_data['name'],
+                price=product_data['price'],
+                quantity=product_data['stock'],
+                category=product_data['category'],
+                sku=product_data['sku']
+            )
+            if product_data.get('local_image_path'):
+                product.set_image_path(product_data['local_image_path'])
+            self.add_product(product)
+
     def remove_product(self, sku):
         """Remove a product from the inventory"""
         if sku in self.products:
