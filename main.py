@@ -4,36 +4,66 @@ from utils import (calculate_conversion_rate, calculate_confidence_interval,
                   calculate_statistical_significance, get_relative_improvement)
 
 def create_conversion_comparison_plot(control_rate, test_rate, 
-                                    control_ci, test_ci):
-    """Create a comparison plot with error bars"""
+                                    control_ci, test_ci, p_value):
+    """Create a comparison plot with error bars and color coding"""
+    # Determine colors based on statistical significance and improvement
+    is_significant = p_value < 0.05
+    is_improvement = test_rate > control_rate
+
+    if not is_significant:
+        bar_colors = ['lightgrey', 'lightgrey']
+    else:
+        if is_improvement:
+            bar_colors = ['lightgrey', '#28a745']  # Green for significant improvement
+        else:
+            bar_colors = ['lightgrey', '#dc3545']  # Red for significant decline
+
     fig = go.Figure()
-    
-    # Add bars for control and test groups
-    fig.add_trace(go.Bar(
-        x=['Control', 'Test'],
-        y=[control_rate * 100, test_rate * 100],
-        width=[0.4, 0.4],
-        error_y=dict(
-            type='data',
-            array=[
-                (control_ci[1] - control_rate) * 100,
-                (test_ci[1] - test_rate) * 100
-            ],
-            arrayminus=[
-                (control_rate - control_ci[0]) * 100,
-                (test_rate - test_ci[0]) * 100
-            ],
-            visible=True
-        )
-    ))
-    
+
+    # Add bars for control and test groups with hover text
+    for i, (label, rate, ci, color) in enumerate([
+        ('Control', control_rate, control_ci, bar_colors[0]),
+        ('Test', test_rate, test_ci, bar_colors[1])
+    ]):
+        fig.add_trace(go.Bar(
+            name=label,
+            x=[label],
+            y=[rate * 100],
+            width=[0.4],
+            marker_color=color,
+            error_y=dict(
+                type='data',
+                array=[(ci[1] - rate) * 100],
+                arrayminus=[(rate - ci[0]) * 100],
+                visible=True
+            ),
+            hovertemplate=(
+                f"<b>{label} Group</b><br>" +
+                "Conversion Rate: %{y:.2f}%<br>" +
+                f"95% CI: [{ci[0]:.2%}, {ci[1]:.2%}]<br>" +
+                "<extra></extra>"
+            )
+        ))
+
+    # Add significance annotation
+    significance_text = (
+        "✓ Statistically Significant" if is_significant
+        else "○ Not Statistically Significant"
+    )
+
     fig.update_layout(
-        title='Conversion Rate Comparison',
+        title={
+            'text': 'Conversion Rate Comparison<br>' +
+                   f'<sup>{significance_text}</sup>',
+            'x': 0.5,
+            'xanchor': 'center'
+        },
         yaxis_title='Conversion Rate (%)',
         showlegend=False,
-        height=400
+        height=400,
+        hovermode='closest'
     )
-    
+
     return fig
 
 def main():
@@ -124,7 +154,7 @@ def main():
     
     # Visualization
     fig = create_conversion_comparison_plot(
-        control_rate, test_rate, control_ci, test_ci
+        control_rate, test_rate, control_ci, test_ci, p_value
     )
     st.plotly_chart(fig, use_container_width=True)
     
