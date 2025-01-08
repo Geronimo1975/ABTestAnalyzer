@@ -1,314 +1,108 @@
 import streamlit as st
 import plotly.graph_objects as go
-from utils import (calculate_efficiency_rate, calculate_accuracy_rate,
-                  calculate_confidence_interval, calculate_statistical_significance,
-                  get_relative_improvement, calculate_utilization_rate)
+from inventory.inventory_manager import InventoryManager
 from scraper import InventoryScraper
-from inventory_analysis import InventoryAnalyzer
 import os
-
-def create_comparison_plot(control_rate, test_rate, 
-                         control_ci, test_ci, p_value, metric_name):
-    """Create a comparison plot with error bars and color coding"""
-    # Determine colors based on statistical significance and improvement
-    is_significant = p_value < 0.05
-    is_improvement = test_rate > control_rate
-
-    if not is_significant:
-        bar_colors = ['lightgrey', 'lightgrey']
-    else:
-        if is_improvement:
-            bar_colors = ['lightgrey', '#28a745']  # Green for significant improvement
-        else:
-            bar_colors = ['lightgrey', '#dc3545']  # Red for significant decline
-
-    fig = go.Figure()
-
-    # Add bars for control and test groups with hover text
-    for i, (label, rate, ci, color) in enumerate([
-        ('Current Process', control_rate, control_ci, bar_colors[0]),
-        ('New Process', test_rate, test_ci, bar_colors[1])
-    ]):
-        fig.add_trace(go.Bar(
-            name=label,
-            x=[label],
-            y=[rate * 100],
-            width=[0.4],
-            marker_color=color,
-            error_y=dict(
-                type='data',
-                array=[(ci[1] - rate) * 100],
-                arrayminus=[(rate - ci[0]) * 100],
-                visible=True
-            ),
-            hovertemplate=(
-                f"<b>{label}</b><br>" +
-                f"{metric_name}: %{{y:.2f}}%<br>" +
-                f"95% CI: [{ci[0]:.2%}, {ci[1]:.2%}]<br>" +
-                "<extra></extra>"
-            )
-        ))
-
-    # Add significance annotation
-    significance_text = (
-        "✓ Statistically Significant" if is_significant
-        else "○ Not Statistically Significant"
-    )
-
-    fig.update_layout(
-        title={
-            'text': f'{metric_name} Comparison<br>' +
-                   f'<sup>{significance_text}</sup>',
-            'x': 0.5,
-            'xanchor': 'center'
-        },
-        yaxis_title=f'{metric_name} (%)',
-        showlegend=False,
-        height=400,
-        hovermode='closest'
-    )
-
-    return fig
 
 def main():
     st.set_page_config(
-        page_title="SAP WM Process & Inventory Analysis",
+        page_title="Inventory Management System",
         layout="wide"
     )
 
-    st.title("SAP Warehouse Management Analytics")
+    st.title("Warehouse Inventory Management System")
 
-    # Add tabs for different functionalities
-    tab1, tab2 = st.tabs(["Process Comparison", "Inventory Analysis"])
+    # Initialize inventory manager
+    inventory_manager = InventoryManager()
 
-    with tab1:
-        st.header("Process Comparison")
+    # Scraping section
+    st.header("Inventory Data Collection")
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
         st.markdown("""
-        Compare warehouse management processes to determine if changes 
-        are statistically significant. Select a metric and enter the data for both current and new processes.
+        Analyze current inventory data from B2B website. 
+        Click the button below to fetch fresh inventory data.
         """)
 
-        # Metric selection
-        metric = st.selectbox(
-            "Select Metric to Compare",
-            ["Picking Efficiency", "Storage Utilization", "Inventory Accuracy", "Order Fulfillment"]
-        )
+        if st.button("Fetch Latest Inventory Data"):
+            with st.spinner("Scraping inventory data..."):
+                scraper = InventoryScraper("https://b2b.unimall.lt/")
+                inventory_data = scraper.scrape_inventory()
+                inventory_manager.add_products(inventory_data) #add scraped data to inventory manager
+                inventory_manager.save_to_json() #save after scraping
+                st.success(f"Successfully scraped {len(inventory_data)} products!")
 
-        # Input section
-        col1, col2 = st.columns(2)
+    # Load existing inventory data
+    inventory_manager.load_from_json()
+    products = inventory_manager.get_all_products()
 
-        with col1:
-            st.subheader("Current Process")
-            if metric in ["Picking Efficiency", "Order Fulfillment"]:
-                control_success = st.number_input(
-                    "Successful Tasks/Orders",
-                    min_value=0,
-                    value=100,
-                    step=1
-                )
-                control_total = st.number_input(
-                    "Total Tasks/Orders",
-                    min_value=1,
-                    value=1000,
-                    step=1
-                )
-            else:  # Storage Utilization, Inventory Accuracy
-                control_success = st.number_input(
-                    "Used Capacity/Correct Items",
-                    min_value=0,
-                    value=800,
-                    step=1
-                )
-                control_total = st.number_input(
-                    "Total Capacity/Items",
-                    min_value=1,
-                    value=1000,
-                    step=1
-                )
+    if products:
+        # Display key metrics
+        total_value = inventory_manager.get_total_inventory_value()
+        low_stock = inventory_manager.get_low_stock_products()
 
-        with col2:
-            st.subheader("New Process")
-            if metric in ["Picking Efficiency", "Order Fulfillment"]:
-                test_success = st.number_input(
-                    "Successful Tasks/Orders (New)",
-                    min_value=0,
-                    value=120,
-                    step=1
-                )
-                test_total = st.number_input(
-                    "Total Tasks/Orders (New)",
-                    min_value=1,
-                    value=1000,
-                    step=1
-                )
-            else:  # Storage Utilization, Inventory Accuracy
-                test_success = st.number_input(
-                    "Used Capacity/Correct Items (New)",
-                    min_value=0,
-                    value=850,
-                    step=1
-                )
-                test_total = st.number_input(
-                    "Total Capacity/Items (New)",
-                    min_value=1,
-                    value=1000,
-                    step=1
-                )
-
-        # Calculate metrics
-        if metric in ["Picking Efficiency", "Order Fulfillment"]:
-            control_rate = calculate_efficiency_rate(control_success, control_total)
-            test_rate = calculate_efficiency_rate(test_success, test_total)
-        else:  # Storage Utilization, Inventory Accuracy
-            control_rate = calculate_accuracy_rate(control_success, control_total)
-            test_rate = calculate_accuracy_rate(test_success, test_total)
-
-        control_ci = calculate_confidence_interval(control_success, control_total)
-        test_ci = calculate_confidence_interval(test_success, test_total)
-
-        chi2, p_value = calculate_statistical_significance(
-            control_success, control_total, test_success, test_total
-        )
-
-        relative_improvement = get_relative_improvement(control_rate, test_rate)
-
-        # Results section
-        st.header("Results")
-
-        # Display rates
         col1, col2, col3 = st.columns(3)
-
         with col1:
             st.metric(
-                "Current Process Rate",
-                f"{control_rate:.2%}",
+                "Total Products",
+                len(products),
                 delta=None
             )
-
         with col2:
             st.metric(
-                "New Process Rate",
-                f"{test_rate:.2%}",
-                delta=f"{relative_improvement:+.2f}%"
+                "Total Inventory Value",
+                f"€{total_value:,.2f}",
+                delta=None
             )
-
         with col3:
             st.metric(
-                "Statistical Significance",
-                f"{(1 - p_value) * 100:.1f}%",
+                "Low Stock Items",
+                len(low_stock),
                 delta=None
             )
 
-        # Visualization
-        fig = create_comparison_plot(
-            control_rate, test_rate, control_ci, test_ci, p_value, metric
-        )
+        # Product Categories Analysis
+        st.subheader("Product Categories")
+        categories = {}
+        for product in products.values():
+            cat = product['category']
+            categories[cat] = categories.get(cat, 0) + 1
+
+        fig = go.Figure(data=[go.Pie(
+            labels=list(categories.keys()),
+            values=list(categories.values()),
+            hole=.3
+        )])
+        fig.update_layout(title="Product Distribution by Category")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Detailed analysis
-        st.subheader("Detailed Analysis")
-
-        st.markdown(f"""
-        - **Current Process Confidence Interval (95%)**: {control_ci[0]:.2%} to {control_ci[1]:.2%}
-        - **New Process Confidence Interval (95%)**: {test_ci[0]:.2%} to {test_ci[1]:.2%}
-        - **P-value**: {p_value:.4f}
-        """)
-
-        # Interpretation
-        st.subheader("Interpretation")
-
-        if p_value < 0.05:
-            st.success(f"""
-            **Statistically Significant Improvement**
-
-            There is strong evidence (p < 0.05) that the difference between the current and new
-            processes is not due to random chance. The new process shows a
-            {abs(relative_improvement):.1f}% {'improvement' if relative_improvement > 0 else 'decline'}.
-            """)
-        else:
-            st.warning("""
-            **Not Statistically Significant**
-
-            There isn't enough evidence to conclude that the difference between the processes
-            is not due to random chance. Consider:
-            - Collecting more data
-            - Reviewing process changes
-            - Analyzing other metrics
-            """)
-
-    with tab2:
-        st.header("Inventory Analysis")
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            st.markdown("""
-            Analyze current inventory data from B2B website. 
-            Click the button below to fetch fresh inventory data.
-            """)
-
-            if st.button("Fetch Latest Inventory Data"):
-                with st.spinner("Scraping inventory data..."):
-                    scraper = InventoryScraper("https://b2b.unimall.lt/")
-                    inventory_data = scraper.scrape_inventory()
-                    st.success(f"Successfully scraped {len(inventory_data)} products!")
-
-        analyzer = InventoryAnalyzer()
-        metrics = analyzer.get_stock_metrics()
-
-        if metrics:
-            # Display key metrics
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric(
-                    "Total Products",
-                    metrics['total_products'],
-                    delta=None
-                )
-
-            with col2:
-                st.metric(
-                    "Total Stock Items",
-                    metrics['total_stock'],
-                    delta=None
-                )
-
-            with col3:
-                st.metric(
-                    "Inventory Health Score",
-                    f"{analyzer.get_inventory_health_score()}/100",
-                    delta=None
-                )
-
-            # Show inventory visualizations
-            st.subheader("Inventory Distribution")
-            col1, col2 = st.columns(2)
-
-            with col1:
-                category_chart = analyzer.create_category_distribution_chart()
-                st.plotly_chart(category_chart, use_container_width=True)
-
-            with col2:
-                stock_chart = analyzer.create_stock_level_chart()
-                st.plotly_chart(stock_chart, use_container_width=True)
-
-            # Show low stock alerts
+        # Low Stock Alerts
+        if low_stock:
             st.subheader("Low Stock Alerts")
-            low_stock = analyzer.get_low_stock_alerts()
-            if low_stock:
-                for product in low_stock:
-                    st.warning(
-                        f"**{product['name']}**\n\n"
-                        f"Current Stock: {product['stock']} units\n\n"
-                        f"Category: {product['category']}"
-                    )
-            else:
-                st.success("No low stock alerts at this time.")
+            for product in low_stock:
+                st.warning(
+                    f"**{product['name']}**\n\n"
+                    f"Current Stock: {product['quantity']} units\n\n"
+                    f"Category: {product['category']}"
+                )
 
-            # Show inventory value
-            st.subheader("Inventory Value")
-            total_value = analyzer.get_inventory_value()
-            st.info(f"Total inventory value: €{total_value:,.2f}")
+        # Product List
+        st.subheader("Product List")
+        for sku, product in products.items():
+            with st.expander(f"{product['name']} ({sku})"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"Category: {product['category']}")
+                    st.write(f"Price: €{product['price']:.2f}")
+                    st.write(f"Quantity: {product['quantity']}")
+                    st.write(f"Total Value: €{product['price'] * product['quantity']:.2f}")
+                with col2:
+                    if product.get('image_path'):
+                        st.image(product['image_path'], width=100)
+
+    else:
+        st.info("No inventory data available. Please fetch data using the button above.")
 
 if __name__ == "__main__":
     main()
